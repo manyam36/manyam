@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#123b64">
+  <title>Khelo Manyam | District Fitness Monitoring</title>
+  <style>
+    :root{--navy:#123b64;--blue:#176b9b;--sky:#eaf3fb;--ink:#17324d;--muted:#64748b;--line:#dce5ee;--bg:#f3f6fa;--green:#15803d;--red:#dc2626;--amber:#b45309}
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    button,input,select,textarea{font:inherit}button{cursor:pointer}
+    .hidden{display:none!important}
+    #loginBox{width:min(100% - 32px,430px);margin:7vh auto;background:white;border-radius:20px;padding:34px;box-shadow:0 18px 55px #082b4b25;text-align:center}
+    .logo{font-size:48px}#loginBox h1{font-size:25px;margin:8px 0;color:var(--navy)}.subtitle{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:25px}
+    .field{display:flex;flex-direction:column;gap:6px;margin:12px 0;text-align:left}.field label{font-size:13px;font-weight:700;color:#334155}
+    input,select,textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:11px 12px;background:white;color:#172b43;min-width:0}
+    input:focus,select:focus,textarea:focus{outline:2px solid #93c5fd;border-color:#3b82f6}
+    .btn{border:0;border-radius:9px;padding:11px 15px;font-weight:700;background:var(--blue);color:white}.btn:hover{filter:brightness(.94)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .btn-block{width:100%;margin-top:12px}.btn-light{background:#e7f0f8;color:var(--navy)}.btn-danger{background:#dc2626}.btn-success{background:#15803d}.btn-small{padding:7px 10px;font-size:12px}
+    #message{min-height:20px;color:var(--red);font-size:13px;margin-top:12px;overflow-wrap:anywhere}.muted{color:var(--muted)}.tiny{font-size:12px}
+    #appShell{min-height:100vh;display:grid;grid-template-columns:250px minmax(0,1fr)}
+    aside{background:#102f4e;color:white;padding:20px 14px;display:flex;flex-direction:column;gap:18px}
+    .brand{padding:4px 10px 18px;border-bottom:1px solid #ffffff25}.brand strong{font-size:19px;display:block;letter-spacing:.4px}.brand span{font-size:11px;color:#c6d9e9}
+    .nav-label{font-size:10px;color:#9db6cb;text-transform:uppercase;letter-spacing:1.2px;padding:0 11px}
+    nav{display:grid;gap:5px}nav button{display:flex;align-items:center;gap:11px;border:0;border-radius:9px;background:transparent;color:#dce9f5;text-align:left;padding:11px 12px;font-size:13px}
+    nav button:hover,nav button.active{background:#ffffff1c;color:white}nav button .ico{width:20px;text-align:center;font-size:16px}
+    .side-bottom{margin-top:auto;border-top:1px solid #ffffff25;padding:14px 9px;font-size:12px;color:#c6d9e9}
+    main{min-width:0}.topbar{height:68px;background:white;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 26px;gap:12px}
+    .topbar h2{font-size:16px;margin:0}.user-chip{display:flex;align-items:center;gap:10px;font-size:12px}.avatar{width:34px;height:34px;border-radius:50%;background:#dcecf8;color:var(--navy);display:grid;place-items:center;font-weight:800}
+    .content{padding:25px;max-width:1500px;margin:auto}.welcome{margin-bottom:20px}.welcome h1{font-size:24px;margin:0 0 5px}.welcome p{color:var(--muted);margin:0;font-size:13px}
+    .grid{display:grid;gap:15px}.stats{grid-template-columns:repeat(4,minmax(0,1fr));margin:18px 0 22px}.card{background:white;border:1px solid var(--line);border-radius:13px;padding:17px;box-shadow:0 2px 7px #0f2d4510}
+    .stat-label{font-size:12px;color:var(--muted)}.stat-value{font-size:28px;font-weight:800;margin:8px 0 2px;color:var(--navy)}.stat-note{font-size:11px;color:var(--muted)}
+    .two-col{grid-template-columns:1.2fr .8fr}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px}.section-head h3{font-size:16px;margin:0}.section-head p{font-size:12px;color:var(--muted);margin:4px 0 0}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}table{border-collapse:collapse;width:100%;min-width:650px;background:white}th,td{padding:11px 12px;border-bottom:1px solid #e8eef4;text-align:left;font-size:12px;white-space:nowrap}th{background:#f4f8fc;color:#526579;font-size:11px;text-transform:uppercase;letter-spacing:.35px}tr:last-child td{border-bottom:0}
+    .pill{display:inline-block;padding:4px 8px;border-radius:20px;background:#e8f3ff;color:#17558a;font-size:11px;font-weight:700}.pill.green{background:#e7f7ed;color:#166534}.pill.red{background:#fee2e2;color:#991b1b}
+    .toolbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-bottom:14px}.toolbar input,.toolbar select{max-width:260px}
+    .mandal-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.mandal-card h4{margin:0 0 8px;font-size:14px}.metric-line{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:7px 0}.bar{height:7px;background:#e6edf4;border-radius:9px;overflow:hidden}.bar span{display:block;height:100%;background:#2784b8;border-radius:9px}
+    .empty{padding:28px;text-align:center;color:var(--muted);font-size:13px}.notice{padding:12px 14px;border-radius:9px;background:#fff7e6;color:#8a4b08;font-size:12px;line-height:1.5;margin-bottom:14px}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px}.form-grid .full{grid-column:1/-1}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:15px}
+    .modal-backdrop{position:fixed;inset:0;background:#071b2e88;display:grid;place-items:center;padding:18px;z-index:10}.modal{background:white;border-radius:15px;width:min(100%,720px);max-height:92vh;overflow:auto;padding:22px;box-shadow:0 20px 60px #0004}.modal h3{margin:0 0 14px}.modal-top{display:flex;justify-content:space-between;align-items:center}
+    .chart-row{display:grid;grid-template-columns:140px 1fr 42px;gap:10px;align-items:center;margin:13px 0;font-size:12px}.chart-track{height:12px;background:#e8eef4;border-radius:20px;overflow:hidden}.chart-track span{display:block;height:100%;background:#2584b8}
+    .footer-note{font-size:11px;color:var(--muted);margin-top:18px;line-height:1.5}
+    @media(max-width:1000px){.stats{grid-template-columns:repeat(2,1fr)}.mandal-grid{grid-template-columns:repeat(2,1fr)}.two-col{grid-template-columns:1fr}}
+    @media(max-width:700px){#appShell{grid-template-columns:1fr}aside{padding:12px;gap:10px}.brand{padding:4px 8px 10px}.brand strong{font-size:16px}nav{display:flex;overflow:auto;padding-bottom:3px}nav button{white-space:nowrap;padding:9px 10px}.nav-label,.side-bottom{display:none}.topbar{height:58px;padding:0 15px}.content{padding:16px}.welcome h1{font-size:21px}.stats{gap:9px}.card{padding:13px}.stat-value{font-size:24px}.mandal-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.form-grid .full{grid-column:auto}.user-chip .user-meta{display:none}}
+    @media print{aside,.topbar,.toolbar,.actions,.no-print{display:none!important}#appShell{display:block}.content{padding:0}.card{box-shadow:none;break-inside:avoid}body{background:white}}
+  </style>
+</head>
+<body>
+  <section id="loginBox">
+    <div class="logo">🏆</div>
+    <h1>MANYAM KHELO INDIA</h1>
+    <div class="subtitle">District Sports &amp; Fitness Monitoring System<br>Parvathipuram Manyam District</div>
+    <form id="loginForm">
+      <div class="field"><label for="email">Official Email ID</label><input type="email" id="email" placeholder="Official Email ID" autocomplete="username" required></div>
+      <div class="field"><label for="password">Password</label><input type="password" id="password" placeholder="Password" autocomplete="current-password" required></div>
+      <button class="btn btn-block" type="submit" id="loginButton">LOGIN</button>
+    </form>
+    <div id="message" role="status" aria-live="polite"></div>
+    <div class="footer-note">Designed for District Education Department</div>
+  </section>
+
+  <div id="appShell" class="hidden">
+    <aside>
+      <div class="brand"><strong>🏆 KHELO MANYAM</strong><span>District Sports &amp; Fitness Monitoring</span></div>
+      <div class="nav-label">Workspace</div>
+      <nav id="mainNav">
+        <button data-view="overview" class="active"><span class="ico">▦</span>District Overview</button>
+        <button data-view="mandals"><span class="ico">⌖</span>Mandal Monitoring</button>
+        <button data-view="schools"><span class="ico">⌂</span>School Management</button>
+        <button data-view="users" data-role="DEO"><span class="ico">♙</span>User Management</button>
+        <button data-view="students"><span class="ico">♧</span>Student Management</button>
+        <button data-view="fitness"><span class="ico">✚</span>Fitness Data Entry</button>
+        <button data-view="analytics"><span class="ico">▥</span>Fitness Analytics</button>
+        <button data-view="reports"><span class="ico">▤</span>Reports &amp; Export</button>
+        <button data-view="settings"><span class="ico">⚙</span>Settings</button>
+      </nav>
+      <div class="side-bottom">Parvathipuram Manyam<br><span id="sideRole">District Administrator</span></div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <h2 id="pageTitle">District Overview</h2>
+        <div class="user-chip"><div class="avatar" id="avatar">D</div><div class="user-meta"><strong id="headerName">DEO Admin</strong><br><span class="muted" id="headerRole">DEO</span></div><button id="logoutButton" class="btn btn-danger btn-small">Logout</button></div>
+      </header>
+      <div class="content" id="pageContent"></div>
+    </main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

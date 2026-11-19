@@ -1,0 +1,110 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(userPath());
+    }
+
+    function profile() {
+      return get(userPath()).data;
+    }
+
+    function activeUser() {
+      return hasProfile() && profile().active == true;
+    }
+
+    function isDEO() {
+      return activeUser() && profile().role == "DEO";
+    }
+
+    function isMEO() {
+      return activeUser() && profile().role == "MEO";
+    }
+
+    function isSchoolStaff() {
+      return activeUser() && profile().role in ["PD", "PET"];
+    }
+
+    function canReadSchool(data) {
+      return isDEO()
+        || (isMEO() && data.mandal == profile().mandal)
+        || (isSchoolStaff() && data.udise == profile().schoolUdise);
+    }
+
+    function canReadAssignedRecord(data) {
+      return isDEO()
+        || (isMEO() && data.mandal == profile().mandal)
+        || (isSchoolStaff()
+            && data.schoolUdise == profile().schoolUdise
+            && data.mandal == profile().mandal);
+    }
+
+    function canWriteAssignedRecord(data) {
+      return isDEO()
+        || (isSchoolStaff()
+            && data.schoolUdise == profile().schoolUdise
+            && data.mandal == profile().mandal);
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn() && (request.auth.uid == userId || isDEO());
+      allow list: if isDEO();
+      // User profile creation and changes must go through trusted Admin Cloud Functions.
+      allow create, update, delete: if false;
+    }
+
+    match /schools/{schoolId} {
+      allow get, list: if activeUser() && canReadSchool(resource.data);
+      allow create, update, delete: if false;
+    }
+
+    match /students/{studentId} {
+      allow get, list: if activeUser() && canReadAssignedRecord(resource.data);
+
+      allow create: if activeUser()
+        && canWriteAssignedRecord(request.resource.data);
+
+      allow update: if activeUser()
+        && (isDEO()
+          || (isSchoolStaff()
+            && resource.data.schoolUdise == profile().schoolUdise
+            && resource.data.mandal == profile().mandal
+            && request.resource.data.schoolUdise == resource.data.schoolUdise
+            && request.resource.data.mandal == resource.data.mandal));
+
+      allow delete: if isDEO();
+    }
+
+    match /fitnessTests/{testId} {
+      allow get, list: if activeUser() && canReadAssignedRecord(resource.data);
+
+      allow create: if activeUser()
+        && canWriteAssignedRecord(request.resource.data);
+
+      allow update: if activeUser()
+        && (isDEO()
+          || (isSchoolStaff()
+            && resource.data.schoolUdise == profile().schoolUdise
+            && resource.data.mandal == profile().mandal
+            && request.resource.data.schoolUdise == resource.data.schoolUdise
+            && request.resource.data.mandal == resource.data.mandal));
+
+      allow delete: if isDEO();
+    }
+
+    // Default deny: every collection must be explicitly authorized above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
