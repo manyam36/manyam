@@ -12,6 +12,7 @@ before(async()=>{
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
     grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`);
   await db.exec(await readFile(new URL('../supabase/migrations/202611240001_initial.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/202611250001_large_registers.sql',import.meta.url),'utf8'));
   for(const id of Object.values(ids))await db.query('insert into auth.users values ($1)',[id]);
   await db.exec(`insert into schools values ('123','School A','BHAMINI','1'), ('456','School B','BHAMINI','1'), ('789','School C','KOMARADA','2');`);
   for(const [name,role,mandal,school] of [['deo','DEO','ALL','ALL'],['meo','MEO','BHAMINI','ALL'],['pet','PET','BHAMINI','123']]){
@@ -72,4 +73,44 @@ test('deactivation removes access for an existing authenticated identity',async(
   const {rows}=await as('pet',()=>db.query('select * from students'));
   assert.deepEqual(rows,[]);
   await db.query('update profiles set active=true where id=$1',[ids.pet]);
+});
+test('summary, pagination and spreadsheet lookups preserve row permissions',async()=>{
+  for(const [role,expected] of [['deo',4],['meo',3],['pet',2],['orphan',0]]){
+    const summary=await as(role,()=>db.query('select public.dashboard_summary() as data'));
+    assert.equal(summary.rows[0].data.students,expected);
+    const page=await as(role,()=>db.query("select public.student_page('',1,100) as data"));
+    assert.equal(page.rows[0].data.total,expected);
+    const matches=await as(role,()=>db.query('select public.match_students($1::jsonb) as data',[JSON.stringify([{studentId:'s2'}])]));
+    assert.equal(matches.rows[0].data.length,['deo','meo'].includes(role)?1:0);
+  }
+  await assert.rejects(as('anon',()=>db.query('select public.dashboard_summary()')),/permission denied/);
+  await assert.rejects(as('pet',()=>db.query('select public.match_students($1::jsonb)',[JSON.stringify(Array(451).fill({studentId:'s1'}))])),/450/);
+});
+test('server search treats percent and underscore literally, and caps page size',async()=>{
+  await db.query('insert into students (id,name,"className","schoolUdise","schoolName",mandal,"createdBy") values (\'literal\',\'100%_Verified\',\'6\',\'123\',\'School A\',\'BHAMINI\',$1)',[ids.deo]);
+  const {rows}=await as('deo',()=>db.query("select public.student_page('%_',999,50000) as data"));
+  assert.equal(rows[0].data.total,1);assert.equal(rows[0].data.pageSize,100);assert.equal(rows[0].data.page,1);
+});
+test('50,000 students and assessments stay in PostgreSQL while responses remain bounded',async()=>{
+  const baseline=(await db.query('select count(*)::int n from students')).rows[0].n;
+  const start=performance.now();
+  await db.query(`insert into students (id,name,pen,"className","schoolUdise","schoolName",mandal,"createdBy")
+    select 'scale-'||lpad(i::text,5,'0'),'Scale student '||i,'PEN-'||i,'6',case when i%2=0 then '123' else '456' end,'School','BHAMINI',$1 from generate_series(1,50000) i`,[ids.deo]);
+  await db.query(`insert into fitness_tests (id,"studentId","studentName","className","schoolUdise","schoolName",mandal,"testDate","heightCm","weightKg","createdBy")
+    select 'test-'||i,'scale-'||lpad(i::text,5,'0'),'Student','6','123','School','BHAMINI','2026-11-25',150,45,$1 from generate_series(1,50000) i`,[ids.deo]);
+  const summary=(await as('deo',()=>db.query('select public.dashboard_summary() data'))).rows[0].data;
+  assert.equal(summary.students,baseline+50000);assert.equal(summary.tests,50001);assert.equal(summary.assessed,50001);
+  assert.equal(summary.recent.length,8);assert.ok(JSON.stringify(summary).length<40000);
+  const page=(await as('deo',()=>db.query("select public.student_page('Scale student',500,100) data"))).rows[0].data;
+  assert.equal(page.total,50000);assert.equal(page.rows.length,100);assert.equal(page.page,500);
+  const last=(await as('deo',()=>db.query("select public.student_page('PEN-50000',1,100) data"))).rows[0].data;
+  assert.equal(last.total,1);assert.equal(last.rows[0].id,'scale-50000');
+  const staff=(await as('pet',()=>db.query("select public.student_page('Scale student',1,100) data"))).rows[0].data;
+  assert.equal(staff.total,25000);assert.ok(staff.rows.every(row=>row.schoolUdise==='123'));
+  const fitness=(await as('pet',()=>db.query("select public.fitness_page('',1,50) data"))).rows[0].data;
+  assert.equal(fitness.total,25001);assert.equal(fitness.rows.length,50);
+  const identifiers=Array.from({length:450},(_,i)=>({studentId:'scale-'+String(i+1).padStart(5,'0')}));
+  const matched=(await as('pet',()=>db.query('select public.match_students($1::jsonb) data',[JSON.stringify(identifiers)]))).rows[0].data;
+  assert.equal(matched.length,225);assert.ok(matched.every(match=>match.student.schoolUdise==='123'));
+  console.log(`Local synthetic scale check completed in ${Math.round(performance.now()-start)} ms; no hosted student records were used.`);
 });

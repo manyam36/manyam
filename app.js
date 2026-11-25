@@ -24,7 +24,7 @@ const FITNESS_FIELDS = [
   ["sitAndReachCm","Sit and Reach (cm)","cm"],
   ["shuttleRunSec","Shuttle Run (seconds)","sec"]
 ];
-const state = { user:null, profile:null, view:"overview", schools:[], students:[], tests:[], users:[], loaded:{}, selectedSchool:"", search:"" };
+const state = { user:null, profile:null, view:"overview", schools:[], students:[], tests:[], users:[], summary:null, studentPage:null, fitnessPage:null, loaded:{}, selectedSchool:"", search:"" };
 const esc = (v="") => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const role = () => String(state.profile?.role || "").toUpperCase();
 const isDEO = () => role()==="DEO";
@@ -80,6 +80,14 @@ async function fetchUsers(force=false){
   state.loaded.users=true;return state.users;
 }
 async function ensureSchools(){if(!state.loaded.schools)await fetchSchools();}
+async function fetchSummary(){
+  if(state.loaded.summary)return state.summary;
+  const token=authChangeToken,summary=await api.summary();
+  if(token!==authChangeToken)return null;
+  state.summary=summary;state.loaded.summary=true;return summary;
+}
+function schoolCounts(udise){return state.summary?.bySchool?.[udise]||{students:0,tests:0,assessed:0};}
+function mandalCounts(mandal){return state.schools.filter(s=>s.mandal===mandal).reduce((total,s)=>{const count=schoolCounts(s.udise);total.students+=count.students;total.tests+=count.tests;total.assessed+=count.assessed;return total;},{students:0,tests:0,assessed:0});}
 function scopedMandals(){
   if(isDEO())return MANDALS;
   if(isMEO())return [assignedMandal()];
@@ -89,11 +97,11 @@ function scopedMandals(){
 
 function renderOverview(){
   const schoolCount=state.schools.length;
-  const studentCount=state.students.length;
-  const testCount=state.tests.length;
+  const studentCount=state.summary.students;
+  const testCount=state.summary.tests;
   const mandals=scopedMandals();
-  const testedStudents=new Set(state.tests.map(t=>t.studentId)).size;
-  const recent=state.tests.slice(0,8);
+  const testedStudents=state.summary.assessed;
+  const recent=state.summary.recent;
   pageContent.innerHTML=`
     <div class="welcome"><h1>Welcome, ${esc(state.profile.name||state.profile.displayName||"DEO Admin")}</h1><p>District Sports &amp; Fitness Monitoring · Parvathipuram Manyam District</p></div>
     <div class="grid stats">
@@ -114,10 +122,9 @@ function renderMandals(){
   pageContent.innerHTML=`<div class="welcome"><h1>Mandal Monitoring</h1><p>School coverage and fitness activity by mandal.</p></div>
     <div class="grid mandal-grid">${mandals.map(m=>{
       const schools=state.schools.filter(s=>s.mandal===m);
-      const students=state.students.filter(s=>s.mandal===m);
-      const tests=state.tests.filter(t=>t.mandal===m);
-      const pct=students.length?Math.min(100,Math.round(new Set(tests.map(t=>t.studentId)).size/students.length*100)):0;
-      return `<div class="card mandal-card"><h4>${esc(m)}</h4><div class="metric-line"><span>Schools</span><strong>${fmt(schools.length)}</strong></div><div class="metric-line"><span>Students</span><strong>${fmt(students.length)}</strong></div><div class="metric-line"><span>Assessments</span><strong>${fmt(tests.length)}</strong></div><div class="metric-line"><span>Students assessed</span><strong>${pct}%</strong></div><div class="bar"><span style="width:${pct}%"></span></div></div>`;
+      const counts=mandalCounts(m);
+      const pct=counts.students?Math.min(100,Math.round(counts.assessed/counts.students*100)):0;
+      return `<div class="card mandal-card"><h4>${esc(m)}</h4><div class="metric-line"><span>Schools</span><strong>${fmt(schools.length)}</strong></div><div class="metric-line"><span>Students</span><strong>${fmt(counts.students)}</strong></div><div class="metric-line"><span>Assessments</span><strong>${fmt(counts.tests)}</strong></div><div class="metric-line"><span>Students assessed</span><strong>${pct}%</strong></div><div class="bar"><span style="width:${pct}%"></span></div></div>`;
     }).join("")}</div>`;
 }
 
@@ -127,7 +134,7 @@ function renderSchools(){
   pageContent.innerHTML=`<div class="welcome"><h1>School Management</h1><p>Master list of schools available to your account.</p></div>
     <div class="toolbar"><input id="schoolSearch" placeholder="Search school, UDISE or mandal" value="${esc(state.search)}"><span class="pill">${rows.length} schools</span></div>
     <div class="table-wrap"><table><thead><tr><th>UDISE Code</th><th>School Name</th><th>Mandal</th><th>Mandal Code</th><th>Students</th><th>Fitness Tests</th></tr></thead><tbody>
-    ${rows.map(s=>`<tr><td>${esc(s.udise)}</td><td>${esc(s.name)}</td><td>${esc(s.mandal)}</td><td>${esc(s.mandalCode)}</td><td>${fmt(state.students.filter(x=>x.schoolUdise===s.udise).length)}</td><td>${fmt(state.tests.filter(x=>x.schoolUdise===s.udise).length)}</td></tr>`).join("")||`<tr><td colspan="6">${empty("No schools match your search.")}</td></tr>`}
+    ${rows.map(s=>`<tr><td>${esc(s.udise)}</td><td>${esc(s.name)}</td><td>${esc(s.mandal)}</td><td>${esc(s.mandalCode)}</td><td>${fmt(schoolCounts(s.udise).students)}</td><td>${fmt(schoolCounts(s.udise).tests)}</td></tr>`).join("")||`<tr><td colspan="6">${empty("No schools match your search.")}</td></tr>`}
     </tbody></table></div>`;
   $("schoolSearch").addEventListener("input",e=>{state.search=e.target.value;renderSchools();const el=$("schoolSearch");el.focus();el.setSelectionRange(el.value.length,el.value.length);});
 }
@@ -265,15 +272,37 @@ async function toggleUser(uid,active){
   catch(err){alert(showError(err));}
 }
 
+function registerPager(result){
+  const pages=Math.max(1,Math.ceil(result.total/result.pageSize));
+  return `<div class="toolbar"><button class="btn btn-light btn-small" id="previousPage" ${result.page<=1?'disabled':''}>Previous</button><span class="muted tiny">Page ${fmt(result.page)} of ${fmt(pages)} | ${fmt(result.total)} matching records</span><button class="btn btn-light btn-small" id="nextPage" ${result.page>=pages?'disabled':''}>Next</button><span id="registerStatus" role="status"></span></div>`;
+}
+async function loadRegister(kind,page,search){
+  const token=++viewChangeToken;
+  const status=$("registerStatus");if(status)status.textContent="Loading...";
+  pageContent.querySelectorAll("#previousPage,#nextPage").forEach(button=>button.disabled=true);
+  try{
+    const result=await (kind==="students"?api.studentPage({search,page}):api.fitnessPage({search,page}));
+    if(token!==viewChangeToken)return;
+    state.search=search;state[kind==="students"?"studentPage":"fitnessPage"]=result;
+    (kind==="students"?renderStudents:renderFitness)();
+  }catch(error){if(token===viewChangeToken){if(status)status.textContent=error.message;pageContent.querySelectorAll("#previousPage,#nextPage").forEach(button=>button.disabled=false);}}
+}
+function bindRegister(kind,result){
+  const input=kind==="students"?"studentSearch":"fitnessSearch";
+  $("registerSearchForm").onsubmit=event=>{event.preventDefault();loadRegister(kind,1,$(input).value.trim());};
+  $("previousPage").onclick=()=>loadRegister(kind,result.page-1,state.search);
+  $("nextPage").onclick=()=>loadRegister(kind,result.page+1,state.search);
+}
 function renderStudents(){
-  const rows=state.students;
-  pageContent.innerHTML=`<div class="welcome"><h1>Student Management</h1><p>Register students against the imported school master. Enter only verified student details.</p></div>
-    <div class="toolbar"><input id="studentSearch" placeholder="Search student name, PEN, UDISE or school" value="${esc(state.search)}">${!isMEO()?'<button class="btn" id="addStudentBtn">＋ Register Student</button>':''}<span class="pill">${rows.length} students</span></div>
+  const result=state.studentPage,rows=result.rows;
+  pageContent.innerHTML=`<div class="welcome"><h1>Student Management</h1><p>Search the full register or browse 100 students at a time.</p></div>
+    <form class="toolbar" id="registerSearchForm"><input id="studentSearch" placeholder="Search name, PEN, UDISE or school" value="${esc(state.search)}"><button class="btn btn-light">Search</button>${!isMEO()?'<button type="button" class="btn" id="addStudentBtn">+ Register Student</button>':''}</form>
+    ${registerPager(result)}
     <div class="table-wrap"><table><thead><tr><th>Student Name</th><th>PEN</th><th>Class</th><th>Gender</th><th>School</th><th>Mandal</th><th>Status</th></tr></thead><tbody>
-    ${rows.filter(s=>`${s.name} ${s.pen} ${s.schoolName} ${s.schoolUdise}`.toLowerCase().includes(state.search.toLowerCase())).map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.pen||"—")}</td><td>${esc(s.className||"—")}</td><td>${esc(s.gender||"—")}</td><td>${esc(s.schoolName||s.schoolUdise)}</td><td>${esc(s.mandal)}</td><td><span class="pill ${s.active===false?"red":"green"}">${s.active===false?"Inactive":"Active"}</span></td></tr>`).join("")||`<tr><td colspan="7">${empty("No student records found. Register students to begin.")}</td></tr>`}
+    ${rows.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.pen||"-")}</td><td>${esc(s.className||"-")}</td><td>${esc(s.gender||"-")}</td><td>${esc(s.schoolName||s.schoolUdise)}</td><td>${esc(s.mandal)}</td><td><span class="pill ${s.active===false?"red":"green"}">${s.active===false?"Inactive":"Active"}</span></td></tr>`).join("")||`<tr><td colspan="7">${empty("No matching student records.")}</td></tr>`}
     </tbody></table></div>`;
-  $("studentSearch").addEventListener("input",e=>{state.search=e.target.value;renderStudents();const el=$("studentSearch");el.focus();el.setSelectionRange(el.value.length,el.value.length);});
-  if($("addStudentBtn")) $("addStudentBtn").addEventListener("click",openStudentModal);
+  bindRegister("students",result);
+  if($("addStudentBtn"))$("addStudentBtn").onclick=openStudentModal;
 }
 
 function openStudentModal(){
@@ -294,7 +323,7 @@ function openStudentModal(){
     if(!school){$("studentFormError").textContent="Please select a valid school.";return;}
     const payload={name:String(f.get("name")).trim(),pen:String(f.get("pen")||"").trim(),className:String(f.get("className")),gender:String(f.get("gender")||""),dob:String(f.get("dob")||"")||null,schoolUdise:school.udise,schoolName:school.name,mandal:school.mandal,mandalCode:school.mandalCode,active:true,createdBy:state.user.uid};
     const btn=$("saveStudentBtn");btn.disabled=true;btn.textContent="Saving...";
-    try{await api.insert("students",payload);modalRoot.innerHTML="";state.loaded.students=false;await fetchStudents(true);renderStudents();}
+    try{await api.insert("students",payload);modalRoot.innerHTML="";state.loaded.students=false;state.loaded.summary=false;await loadRegister("students",1,state.search);}
     catch(err){$("studentFormError").textContent=showError(err);btn.disabled=false;btn.textContent="Save Student";}
   });
 }
@@ -317,28 +346,27 @@ function fitnessPayload(student, values, testDate, remarks=""){
   return payload;
 }
 function renderFitness(){
-  const recent=state.tests.slice(0,50);
+  const result=state.fitnessPage,recent=result.rows;
   const canEnter=isDEO()||isSchoolUser();
   pageContent.innerHTML=`
     <div class="welcome"><h1>Fitness Data Entry</h1><p>Individual assessment entry and Excel bulk upload for the Khelo India fitness parameters.</p></div>
     <div class="notice">Enter measured values only. Height is in centimetres, weight in kilograms, jumps/reach in centimetres, and running times in seconds. BMI is calculated automatically from height and weight.</div>
     <div class="toolbar">
       ${canEnter?'<button class="btn" id="newFitnessBtn">＋ Individual Entry</button><button class="btn btn-light" id="downloadFitnessTemplate">Download Excel Template</button><button class="btn btn-light" id="bulkFitnessBtn">Upload Excel / CSV</button><input id="fitnessFile" type="file" accept=".xlsx,.xls,.csv" class="hidden">':''}
-      <input id="fitnessSearch" placeholder="Search student, PEN, school or UDISE" value="${esc(state.search)}">
-      <span class="pill">${state.tests.length} assessment records</span>
-    </div>
+    </div><form class="toolbar" id="registerSearchForm"><input id="fitnessSearch" placeholder="Search student, PEN, school or UDISE" value="${esc(state.search)}"><button class="btn btn-light">Search</button></form>
+    ${registerPager(result)}
     <div class="table-wrap"><table><thead><tr>
       <th>Student</th><th>PEN</th><th>Class</th><th>School</th><th>Mandal</th><th>Date</th><th>Height cm</th><th>Weight kg</th><th>BMI</th><th>50m sec</th><th>600m sec</th><th>Broad Jump cm</th><th>Sit & Reach cm</th><th>Shuttle sec</th>
-    </tr></thead><tbody>${recent.filter(t=>`${t.studentName} ${t.pen} ${t.schoolName} ${t.schoolUdise} ${t.mandal}`.toLowerCase().includes(state.search.toLowerCase())).map(t=>`<tr>
+    </tr></thead><tbody>${recent.map(t=>`<tr>
       <td>${esc(t.studentName)}</td><td>${esc(t.pen||"—")}</td><td>${esc(t.className||"—")}</td><td>${esc(t.schoolName||"—")}</td><td>${esc(t.mandal||"—")}</td><td>${esc(t.testDate||"—")}</td>
       <td>${fitnessValue(t.heightCm)}</td><td>${fitnessValue(t.weightKg)}</td><td>${fitnessValue(t.bmi)}</td><td>${fitnessValue(t.run50mSec)}</td><td>${fitnessValue(t.run600mSec)}</td><td>${fitnessValue(t.standingBroadJumpCm)}</td><td>${fitnessValue(t.sitAndReachCm)}</td><td>${fitnessValue(t.shuttleRunSec)}</td>
     </tr>`).join("")||`<tr><td colspan="14">${empty("No fitness assessments found. Register students and enter assessments to begin.")}</td></tr>`}</tbody></table></div>
-    <p class="footer-note">Showing the latest 50 records. Use Reports &amp; Export to download the complete set of records accessible to your account.</p>`;
-  if($("newFitnessBtn"))$("newFitnessBtn").onclick=()=>openFitnessModal(state.students);
+    <p class="footer-note">Showing up to 50 matching records per page. Reports &amp; Export loads the complete register only when opened.</p>`;
+  if($("newFitnessBtn"))$("newFitnessBtn").onclick=()=>openFitnessModal().catch(error=>alert(showError(error)));
   if($("downloadFitnessTemplate"))$("downloadFitnessTemplate").onclick=downloadFitnessTemplate;
   if($("bulkFitnessBtn"))$("bulkFitnessBtn").onclick=()=>$ ("fitnessFile").click();
   if($("fitnessFile"))$("fitnessFile").addEventListener("change",handleFitnessFile);
-  if($("fitnessSearch"))$("fitnessSearch").addEventListener("input",e=>{state.search=e.target.value;renderFitness();const el=$("fitnessSearch");el.focus();el.setSelectionRange(el.value.length,el.value.length);});
+  bindRegister("fitness",result);
 }
 function downloadFitnessTemplate(){
   const headers=["studentId","pen","schoolUdise","testDate","heightCm","weightKg","run50mSec","run600mSec","standingBroadJumpCm","sitAndReachCm","shuttleRunSec","remarks"];
@@ -357,14 +385,19 @@ async function handleFitnessFile(event){
     const wb=XLSX.read(data,{type:"array",cellDates:false});
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:"",raw:false});
     if(!rows.length)throw new Error("The selected file has no data rows.");
-    const students=state.students;
+    const matched=new Map();
+    for(let offset=0;offset<rows.length;offset+=450){
+      const identifiers=rows.slice(offset,offset+450).map(row=>({studentId:String(row.studentId||"").trim(),pen:String(row.pen||"").trim(),schoolUdise:String(row.schoolUdise||"").trim()}));
+      for(const match of await api.matchStudents(identifiers)){
+        const index=offset+match.index;
+        if(!matched.has(index))matched.set(index,[]);
+        matched.get(index).push(match.student);
+      }
+    }
     const prepared=[];const errors=[];
     rows.forEach((row,index)=>{
       const line=index+2;
-      const udise=String(row.schoolUdise||"").trim();
-      const pen=String(row.pen||"").trim();
-      const studentId=String(row.studentId||"").trim();
-      let matches=students.filter(s=>studentId?s.id===studentId:(udise&&pen&&String(s.schoolUdise)===udise&&String(s.pen||"")===pen));
+      const matches=matched.get(index)||[];
       if(matches.length!==1){errors.push(`Row ${line}: student not uniquely matched. Supply studentId, or both pen and schoolUdise.`);return;}
       const student=matches[0];
       const rawDate=String(row.testDate||today()).trim();
@@ -383,15 +416,18 @@ async function handleFitnessFile(event){
     for(let i=0;i<prepared.length;i+=450){
       await api.insert("fitness_tests",prepared.slice(i,i+450));count+=Math.min(450,prepared.length-i);
     }
-    state.loaded.tests=false;await fetchTests(true);renderFitness();alert(`Successfully imported ${count} fitness assessment(s).`);
+    state.loaded.tests=false;state.loaded.summary=false;await loadRegister("fitness",1,state.search);alert(`Successfully imported ${count} fitness assessment(s).`);
   }catch(err){alert(showError(err));}
 }
-function openFitnessModal(students){
+async function openFitnessModal(){
+  const owner=state.user?.uid,students=(await api.studentPage()).rows;
+  if(state.user?.uid!==owner||state.view!=="fitness")return;
   if(!students.length){alert("Register students before entering fitness assessments.");return;}
-  const available=isSchoolUser()?students.filter(s=>s.schoolUdise===assignedSchool()):students;
+  let available=students;
   if(!available.length){alert("No students are available for your assigned school.");return;}
   const opts=available.map(s=>`<option value="${esc(s.id)}">${esc(s.name)} — ${esc(s.schoolName)} (${esc(s.className)})</option>`).join("");
   modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal"><div class="modal-top"><h3>Individual Fitness Assessment</h3><button type="button" class="btn btn-light btn-small" id="closeModal">Close</button></div>
+    <div class="field"><label for="fitnessStudentSearch">Find a student</label><input id="fitnessStudentSearch" placeholder="Search by name, PEN, UDISE or school"><small class="muted" id="studentLookupStatus">Showing up to 100 students. Search to find others.</small></div>
     <form id="fitnessForm"><div class="form-grid">
       <div class="field full"><label>Student *</label><select name="studentId" required>${opts}</select></div>
       <div class="field"><label>Assessment Date *</label><input name="testDate" type="date" value="${today()}" required></div>
@@ -400,6 +436,21 @@ function openFitnessModal(students){
     </div><div id="fitnessBMI" class="notice">BMI will be calculated when both height and weight are entered.</div><div id="fitnessFormError" class="notice hidden"></div><div class="actions"><button type="submit" class="btn" id="saveFitnessBtn">Save Assessment</button></div></form></div></div>`;
   $("closeModal").onclick=()=>modalRoot.innerHTML="";
   const form=$("fitnessForm");
+  let lookupTimer,lookupToken=0;
+  $("fitnessStudentSearch").oninput=event=>{
+    clearTimeout(lookupTimer);const search=event.target.value.trim(),token=++lookupToken;
+    form.querySelector('button[type="submit"]').disabled=true;
+    lookupTimer=setTimeout(async()=>{
+      try{
+        const result=await api.studentPage({search});
+        if(token!==lookupToken||!modalRoot.contains(form)||state.user?.uid!==owner)return;
+        available=result.rows;
+        form.elements.studentId.innerHTML=available.map(s=>`<option value="${esc(s.id)}">${esc(s.name)} — ${esc(s.schoolName)} (${esc(s.className)})</option>`).join("");
+        $("studentLookupStatus").textContent=`${fmt(result.total)} matching students; showing up to 100.`;
+        form.querySelector('button[type="submit"]').disabled=!available.length;
+      }catch{$("studentLookupStatus")&&($("studentLookupStatus").textContent="Could not search students. Try again.");}
+    },300);
+  };
   const calc=()=>{const h=Number(form.elements.heightCm.value),w=Number(form.elements.weightKg.value);$("fitnessBMI").textContent=h>0&&w>0?`Calculated BMI: ${(w/((h/100)**2)).toFixed(2)}`:"BMI will be calculated when both height and weight are entered.";};
   form.elements.heightCm.addEventListener("input",calc);form.elements.weightKg.addEventListener("input",calc);
   form.addEventListener("submit",async e=>{
@@ -411,23 +462,20 @@ function openFitnessModal(students){
       if(FITNESS_FIELDS.every(([key])=>values[key]===""))throw new Error("Enter at least one fitness measurement.");
       const payload=fitnessPayload(student,values,String(f.get("testDate")),String(f.get("remarks")||"").trim());
       await api.insert("fitness_tests",payload);
-      modalRoot.innerHTML="";state.loaded.tests=false;await fetchTests(true);renderFitness();
+      modalRoot.innerHTML="";state.loaded.tests=false;state.loaded.summary=false;await loadRegister("fitness",1,state.search);
     }catch(error){err.textContent=showError(error);err.classList.remove("hidden");btn.disabled=false;btn.textContent="Save Assessment";}
   });
 }
 
 function renderAnalytics(){
-  const tests=state.tests;
-  const mandals=scopedMandals();
-  const counts=mandals.map(m=>({name:m,count:tests.filter(t=>t.mandal===m).length}));
+  const summary=state.summary;
+  const counts=scopedMandals().map(m=>({name:m,count:mandalCounts(m).tests}));
   const max=Math.max(1,...counts.map(x=>x.count));
-  const avgBMI=tests.filter(t=>Number(t.bmi)>0);
-  const bmiAvg=avgBMI.length?(avgBMI.reduce((a,b)=>a+Number(b.bmi),0)/avgBMI.length).toFixed(2):"—";
-  const genderCounts=["Male","Female","Other"].map(g=>({name:g,count:tests.filter(t=>String(t.gender).toLowerCase()===g.toLowerCase()).length}));
-  pageContent.innerHTML=`<div class="welcome"><h1>Fitness Analytics</h1><p>Analysis of recorded fitness assessments. Blank measures are excluded from averages.</p></div>
-    <div class="grid stats">${stat("Assessments",fmt(tests.length),"All available records","✚")}${stat("Students Assessed",fmt(new Set(tests.map(t=>t.studentId)).size),"Unique student IDs","♧")}${stat("Average BMI",bmiAvg,"Among records with valid height and weight","◉")}${stat("Schools Covered",fmt(new Set(tests.map(t=>t.schoolUdise)).size),"Schools with at least one assessment","⌂")}</div>
-    ${card("Assessments by Mandal",counts.map(x=>`<div class="chart-row"><span>${esc(x.name)}</span><div class="chart-track"><span style="width:${x.count/max*100}%"></span></div><strong>${x.count}</strong></div>`).join("")||empty("No data"))}
-    <div style="height:14px"></div>${card("Assessments by Gender",genderCounts.map(x=>`<div class="chart-row"><span>${esc(x.name)}</span><div class="chart-track"><span style="width:${tests.length?x.count/tests.length*100:0}%"></span></div><strong>${x.count}</strong></div>`).join(""))}`;
+  const genders=["Male","Female","Other"].map(name=>({name,count:summary.gender[name]||0}));
+  pageContent.innerHTML=`<div class="welcome"><h1>Fitness Analytics</h1><p>Summary of recorded assessments within your assigned area.</p></div>
+    <div class="grid stats">${stat("Assessments",fmt(summary.tests),"Recorded assessments")}${stat("Students Assessed",fmt(summary.assessed),"Unique students")}${stat("Average BMI",summary.averageBMI??"-","Recorded positive BMI values")}${stat("Schools Covered",Object.values(summary.bySchool).filter(s=>s.tests>0).length,"Schools with assessments")}</div>
+    ${card("Assessments by Mandal",counts.map(x=>`<div class="chart-row"><span>${esc(x.name)}</span><div class="chart-track"><span style="width:${x.count/max*100}%"></span></div><strong>${fmt(x.count)}</strong></div>`).join(""))}
+    <div style="height:14px"></div>${card("Assessments by Gender",genders.map(x=>`<div class="chart-row"><span>${x.name}</span><div class="chart-track"><span style="width:${summary.tests?x.count/summary.tests*100:0}%"></span></div><strong>${fmt(x.count)}</strong></div>`).join(""))}`;
 }
 
 function csvDownload(filename,rows){
@@ -655,8 +703,10 @@ async function openView(view){
   setPageTitle(VIEWS[view][0]);pageContent.innerHTML=`<div class="empty">Loading ${esc(VIEWS[view][0])}...</div>`;
   try{
     if(["overview","mandals","schools","users","students","fitness","analytics","reports"].includes(view))await ensureSchools();
-    if(["overview","mandals","schools","students","fitness","analytics","reports"].includes(view))await fetchStudents();
-    if(["overview","mandals","schools","fitness","analytics","reports"].includes(view))await fetchTests();
+    if(["overview","mandals","schools","analytics"].includes(view))await fetchSummary();
+    if(view==="students"){const result=await api.studentPage();if(token!==viewChangeToken)return;state.studentPage=result;}
+    if(view==="fitness"){const result=await api.fitnessPage();if(token!==viewChangeToken)return;state.fitnessPage=result;}
+    if(view==="reports")await Promise.all([fetchStudents(),fetchTests()]);
     if(view==="users"||view==="reports"&&isDEO())await fetchUsers();
     if(token!==viewChangeToken)return;
     VIEWS[view][1]();
@@ -692,7 +742,7 @@ async function handleAuthUser(authUser){
     if(!["DEO","MEO","PD","PET"].includes(String(p.role||"").toUpperCase()))throw new Error("Invalid user role. Contact DEO.");
     if(p.role==="MEO"&&!p.mandal)throw new Error("MEO profile is missing its assigned mandal.");
     if(["PD","PET"].includes(p.role)&&!p.schoolUdise)throw new Error("PD/PET profile is missing its assigned school.");
-    state.user=user;state.profile=p;state.loaded={};state.schools=[];state.students=[];state.tests=[];state.users=[];
+    state.user=user;state.profile=p;state.loaded={};state.schools=[];state.students=[];state.tests=[];state.users=[];state.summary=null;state.studentPage=null;state.fitnessPage=null;
     loginBox.classList.add("hidden");appShell.classList.remove("hidden");
     const name=p.name||p.displayName||"User";
     $("headerName").textContent=name;$("headerRole").textContent=p.role;$("sideRole").textContent=p.role;$("avatar").textContent=name.charAt(0).toUpperCase();

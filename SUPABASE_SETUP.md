@@ -24,7 +24,8 @@ Only the URL and public key belong in the browser. Keep database passwords, pers
 In the Supabase **SQL Editor**, run these files in order:
 
 1. `supabase/migrations/202611240001_initial.sql`
-2. `supabase/seed.sql`
+2. `supabase/migrations/202611250001_large_registers.sql`
+3. `supabase/seed.sql`
 
 The schema migration is for a new database and is applied once. With the CLI migration workflow, `supabase db push` tracks this automatically; do not both manually apply and push the same migration. The school seed can be run again. It contains exactly the 200 school master records from `schools.json`; no student records are invented.
 
@@ -83,7 +84,7 @@ Fitness imports validate all rows before writing in batches of 450. Each batch i
 
 As checked on 24 November 2026, the Free plan includes 50,000 monthly active users, a 500 MB database, 5 GB egress and 500,000 Edge Function invocations. Free projects can pause after one week of inactivity. Check current details at https://supabase.com/pricing .
 
-100–200 staff accounts are comfortably below the Auth allowance. Students are database records, not login accounts. About 10,000 students plus measured fitness history should be feasible, but actual database size and downloads determine whether usage stays within the free allowance. Queries are scoped per role, indexed by school/mandal, and paginated in 500-row requests. The app caches loaded registers during a session; the DEO's full district reports can still transfer substantial data.
+100–200 staff accounts are comfortably below the Auth allowance. Students are database records, not login accounts. Actual database size and downloads determine whether 50,000 students and their fitness history stay within the free allowance. Dashboard and analytics summaries run inside PostgreSQL with caller permissions. Student pages contain at most 100 rows; assessment pages contain at most 50. Student selection searches the full register, and fitness imports match only the spreadsheet's referenced students in batches of 450. Full Reports & Export still downloads the complete permitted register in 500-row requests and can transfer substantial data.
 
 ## Existing Firebase records
 
@@ -96,6 +97,6 @@ npm install
 npm test
 ```
 
-These cover spreadsheet validation, retrieving 10,000 students, PostgreSQL schema/RLS/constraints, and function authorization, duplicate handling and compensating cleanup. They run locally, without hosted Supabase credentials. Live deployment and login require the project setup above.
+These cover spreadsheet validation, exporting 50,000 students, PostgreSQL schema/RLS/constraints, and function authorization, duplicate handling and compensating cleanup. A local synthetic scale check inserts 50,000 students and 50,000 assessments into an in-memory database, then checks bounded pagination, search, summary counts and school access. No synthetic student records are written to the hosted project. Live deployment and login require the project setup above.
 
 For browser checks, run `npx playwright install chromium` then `npm run test:browser`. You may set `BROWSER_EXECUTABLE` to an existing Chromium executable instead. The browser check loads the real unconfigured app, then mocks the Supabase backend to exercise login and Excel/CSV account creation. It needs internet access to the SDK and spreadsheet CDNs and never creates a real account.

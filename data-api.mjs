@@ -1,6 +1,15 @@
 // Page through records explicitly: Supabase returns at most 1,000 by default.
 export function createDataApi(client) {
+  async function rpc(name,args={}){
+    const {data,error}=await client.rpc(name,args);
+    if(error)throw new Error(error.message);
+    return data;
+  }
   return {
+    summary:()=>rpc('dashboard_summary'),
+    studentPage:({search='',page=1,pageSize=100}={})=>rpc('student_page',{p_search:search,p_page:page,p_size:pageSize}),
+    fitnessPage:({search='',page=1,pageSize=50}={})=>rpc('fitness_page',{p_search:search,p_page:page,p_size:pageSize}),
+    matchStudents:identifiers=>rpc('match_students',{p_identifiers:identifiers}),
     async list(table, filters = {}) {
       const key = table === 'schools' ? 'udise' : 'id';
       const rows = [];

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDataApi } from '../data-api.mjs';
 
-test('fetches all 10,000 students with stable cursors and scope filters',async()=>{
-  const all=Array.from({length:10000},(_,i)=>({id:String(i).padStart(5,'0'),mandal:'BHAMINI'}));
+test('exports all 50,000 students with stable cursors and scope filters',async()=>{
+  const all=Array.from({length:50000},(_,i)=>({id:String(i).padStart(5,'0'),mandal:'BHAMINI'}));
   let calls=0;
   const client={from(table){
     assert.equal(table,'students');calls++;
@@ -12,7 +12,7 @@ test('fetches all 10,000 students with stable cursors and scope filters',async()
     return query;
   }};
   assert.deepEqual(await createDataApi(client).list('students',{mandal:'BHAMINI'}),all);
-  assert.equal(calls,21);
+  assert.equal(calls,101);
 });
 test('database errors do not silently produce partial registers',async()=>{
   const request={select(){return this;},order(){return this;},range(){return this;},then(resolve){return Promise.resolve({data:null,error:{message:'Access denied'}}).then(resolve);}};
