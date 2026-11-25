@@ -1,5 +1,9 @@
 ﻿# Khelo Manyam
 
+Production app: **https://khelo-manyam.web.app**
+
+Firebase Hosting deployment account and Git commit email: `itcellparvathipurammanyam@gmail.com`. The app uses the Supabase project `ntpivhkomweiejabxtgq` for authentication and records.
+
 District sports and fitness dashboard for DEO, MEO, PD and PET staff. The current app uses **Supabase Authentication and PostgreSQL**, with Row Level Security and an admin-only Edge Function for staff account creation.
 
 The app is configured for the Supabase project `ntpivhkomweiejabxtgq`. Its database schema, 200 school master records, and `manage-users` Edge Function are deployed. The first DEO account is `itcellparvathipurammanyam@gmail.com`. Only public connection settings are saved in `supabase-config.js`; passwords and server keys are not stored in application files. [SUPABASE_SETUP.md](SUPABASE_SETUP.md) documents the setup and future deployment steps.
