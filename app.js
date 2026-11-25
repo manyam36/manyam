@@ -1,20 +1,9 @@
-import { firebaseConfig } from "./firebase-config.js";
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import {
-  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import {
-  getFirestore, doc, getDoc, collection, getDocs, query, where,
-  addDoc, updateDoc, serverTimestamp, writeBatch
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-functions.js";
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-// Callable administration functions use the deployed asia-south1 Functions endpoint.
-// This avoids routing production user administration through a partial local emulator.
-const functions = getFunctions(app, "asia-south1");
+import { supabase, setupError } from "./supabase-client.js";
+import { createDataApi } from "./data-api.mjs";
+import { createManagedAccount, setAccountActive } from "./managed-users.js";
+import { prepareUserImport } from "./user-import.mjs";
+const db = supabase;
+const api = supabase ? createDataApi(supabase) : null;
 
 const $ = (id) => document.getElementById(id);
 const loginBox = $("loginBox"), appShell = $("appShell"), loginForm = $("loginForm");
@@ -47,7 +36,6 @@ const fmt = (n) => Number(n||0).toLocaleString("en-IN");
 const today = () => new Date().toISOString().slice(0,10);
 function showLoginError(text){ message.textContent=text; }
 function setLoginBusy(busy){loginButton.disabled=busy;loginButton.textContent=busy?"PLEASE WAIT...":"LOGIN";}
-function profilePath(uid){return doc(db,"users",uid);}
 function setPageTitle(title){$("pageTitle").textContent=title;}
 function empty(text){return `<div class="empty">${esc(text)}</div>`;}
 function card(title,body,extra=""){return `<section class="card ${extra}"><div class="section-head"><h3>${title}</h3></div>${body}</section>`;}
@@ -55,39 +43,40 @@ function stat(label,value,note,icon){return `<div class="card"><div class="stat-
 function showError(err){console.error(err);return err?.message || "Something went wrong. Please try again.";}
 
 async function fetchSchools(){
-  let q;
-  if(isDEO()) q=collection(db,"schools");
-  else if(isMEO()) q=query(collection(db,"schools"),where("mandal","==",assignedMandal()));
-  else q=query(collection(db,"schools"),where("udise","==",assignedSchool()));
-  const snap=await getDocs(q);
-  state.schools=snap.docs.map(d=>({id:d.id,...d.data()}));
+  const token=authChangeToken;
+  const filters=isDEO()?{}:isMEO()?{mandal:assignedMandal()}:{udise:assignedSchool()};
+  const schools=await api.list("schools",filters);
+  if(token!==authChangeToken)return [];
+  state.schools=schools;
   state.loaded.schools=true;
   return state.schools;
 }
-function scopedQuery(collectionName){
-  const ref=collection(db,collectionName);
-  if(isDEO()) return ref;
-  if(isMEO()) return query(ref,where("mandal","==",assignedMandal()));
-  return query(ref,where("schoolUdise","==",assignedSchool()),where("mandal","==",assignedMandal()));
+function scopeFilters(){
+  if(isDEO())return {};
+  if(isMEO())return {mandal:assignedMandal()};
+  return {schoolUdise:assignedSchool(),mandal:assignedMandal()};
 }
 async function fetchStudents(force=false){
   if(state.loaded.students&&!force)return state.students;
-  const snap=await getDocs(scopedQuery("students"));
-  state.students=snap.docs.map(d=>({id:d.id,...d.data()}));
+  const token=authChangeToken,students=await api.list("students",scopeFilters());
+  if(token!==authChangeToken)return [];
+  state.students=students;
   state.loaded.students=true;return state.students;
 }
 async function fetchTests(force=false){
   if(state.loaded.tests&&!force)return state.tests;
-  const snap=await getDocs(scopedQuery("fitnessTests"));
-  state.tests=snap.docs.map(d=>({id:d.id,...d.data()}));
+  const token=authChangeToken,tests=await api.list("fitness_tests",scopeFilters());
+  if(token!==authChangeToken)return [];
+  state.tests=tests;
   state.tests.sort((a,b)=>String(b.testDate||"").localeCompare(String(a.testDate||"")));
   state.loaded.tests=true;return state.tests;
 }
 async function fetchUsers(force=false){
   if(!isDEO())return [];
   if(state.loaded.users&&!force)return state.users;
-  const snap=await getDocs(collection(db,"users"));
-  state.users=snap.docs.map(d=>({id:d.id,...d.data()}));
+  const token=authChangeToken,users=await api.list("profiles");
+  if(token!==authChangeToken)return [];
+  state.users=users;
   state.loaded.users=true;return state.users;
 }
 async function ensureSchools(){if(!state.loaded.schools)await fetchSchools();}
@@ -117,7 +106,7 @@ function renderOverview(){
       ${card("Mandal-wise School Coverage",`<div class="mandal-grid grid">${mandals.map(m=>{const n=state.schools.filter(s=>s.mandal===m).length;return `<div class="card"><h4>${esc(m)}</h4><div class="metric-line"><span>Schools</span><strong>${n}</strong></div><div class="bar"><span style="width:${schoolCount?Math.round(n/Math.max(...mandals.map(x=>state.schools.filter(s=>s.mandal===x).length),1)*100):0}%"></span></div></div>`}).join("")}</div>`)}
       ${card("Latest Fitness Assessments",recent.length?`<div class="table-wrap"><table><thead><tr><th>Student</th><th>School</th><th>Date</th><th>BMI</th></tr></thead><tbody>${recent.map(t=>`<tr><td>${esc(t.studentName)}</td><td>${esc(t.schoolName)}</td><td>${esc(t.testDate)}</td><td>${esc(t.bmi??"—")}</td></tr>`).join("")}</tbody></table></div>`:empty("No fitness assessments entered yet."))}
     </div>
-    <p class="footer-note">Counts are based on records currently stored in Firestore. Student and fitness totals remain zero until records are entered.</p>`;
+    <p class="footer-note">Counts are based on records currently stored in Supabase. Student and fitness totals remain zero until records are entered.</p>`;
 }
 
 function renderMandals(){
@@ -145,13 +134,14 @@ function renderSchools(){
 
 function renderUsers(){
   const rows=state.users;
-  pageContent.innerHTML=`<div class="welcome"><h1>User Management</h1><p>Create and manage MEO, PD and PET accounts. Account creation is performed securely by Cloud Functions.</p></div>
-    <div class="notice">New accounts are created with an active Firestore profile. Share initial passwords securely with the respective staff member and ask them to change it through the approved account-recovery process.</div>
-    <div class="toolbar"><button class="btn" id="addUserBtn">＋ Create User</button><span class="pill">${rows.length} profiles</span></div>
+  pageContent.innerHTML=`<div class="welcome"><h1>User Management</h1><p>Create and manage MEO, PD and PET accounts using Supabase Authentication and PostgreSQL.</p></div>
+    <div class="notice">New accounts are created with an active staff profile. Share each initial password securely with its staff member. They can change it in Settings after signing in.</div>
+    <div class="toolbar"><button class="btn" id="addUserBtn">＋ Create User</button><button class="btn btn-light" id="importUsersBtn">Upload Staff Excel</button><span class="pill">${rows.length} profiles</span></div>
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Mandal</th><th>School</th><th>Status</th><th>Action</th></tr></thead><tbody>
     ${rows.map(u=>`<tr><td>${esc(u.name||u.displayName||"—")}</td><td>${esc(u.email||"—")}</td><td><span class="pill">${esc(u.role||"—")}</span></td><td>${esc(u.mandal||"—")}</td><td>${esc(u.schoolName||u.schoolUdise||"—")}</td><td><span class="pill ${u.active===true?"green":"red"}">${u.active===true?"Active":"Inactive"}</span></td><td>${u.id===state.user.uid?'<span class="muted">Current user</span>':`<button class="btn btn-small ${u.active===true?"btn-danger":"btn-success"}" data-toggle-user="${esc(u.id)}" data-active="${u.active===true?"true":"false"}">${u.active===true?"Deactivate":"Activate"}</button>`}</td></tr>`).join("")||`<tr><td colspan="7">${empty("No user profiles found.")}</td></tr>`}
     </tbody></table></div>`;
   $("addUserBtn").addEventListener("click",openUserModal);
+  $("importUsersBtn").addEventListener("click",openUserImport);
   pageContent.querySelectorAll("[data-toggle-user]").forEach(btn=>btn.addEventListener("click",()=>toggleUser(btn.dataset.toggleUser,btn.dataset.active!=="true")));
 }
 
@@ -178,14 +168,100 @@ function openUserModal(){
     const data={email:String(f.get("email")).trim(),password:String(f.get("password")),displayName:String(f.get("displayName")).trim(),role:roleValue,mandal:roleValue==="MEO"?String(f.get("mandal")):(selectedSchool?.mandal||"")};
     if(roleValue!=="MEO")data.schoolUdise=selectedSchool?.udise||"";
     const submit=$("createUserSubmit");submit.disabled=true;submit.textContent="Creating...";
-    try{const fn=httpsCallable(functions,"createManagedUser");await fn(data);modalRoot.innerHTML="";state.loaded.users=false;await fetchUsers(true);renderUsers();alert("User account created successfully.");}
+    try{await createManagedAccount(db,state.user,data);modalRoot.innerHTML="";state.loaded.users=false;await fetchUsers(true);renderUsers();alert("User account created successfully.");}
     catch(err){$("userFormError").textContent=showError(err);submit.disabled=false;submit.textContent="Create Account";}
   });
 }
 
+function openUserImport(){
+  if(!isDEO())return;
+  let matrix=null, pending=[], running=false;
+  const administrator=state.user;
+  modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="importTitle">
+    <div class="modal-top"><h3 id="importTitle">Create Logins from Excel</h3><button class="btn btn-light btn-small" id="closeImport">Close</button></div>
+    <p class="muted tiny">Upload up to 200 accounts with email and password columns. Optional columns: name, role, mandal, schoolUdise. Choose defaults below for missing assignments. Passwords must be text cells with at least 8 characters. Account creation runs through the admin server function. If a service limit is reached, wait before retrying the remaining rows.</p>
+    <form id="importUserForm"><fieldset id="importFields" style="border:0;padding:0;margin:0"><div class="form-grid">
+      <div class="field"><label for="importRole">Default role</label><select id="importRole"><option>MEO</option><option>PD</option><option>PET</option></select></div>
+      <div class="field"><label for="importMandal">Default mandal (MEO)</label><select id="importMandal">${MANDALS.map(m=>`<option>${esc(m)}</option>`).join("")}</select></div>
+      <div class="field full"><label for="importSchool">Default school (PD / PET)</label><select id="importSchool"><option value="">Choose a school, or supply schoolUdise in Excel</option>${state.schools.map(s=>`<option value="${esc(s.udise)}">${esc(s.name)} — ${esc(s.mandal)} (${esc(s.udise)})</option>`).join("")}</select></div>
+      <div class="field full"><label for="staffExcel">Excel / CSV file</label><input id="staffExcel" type="file" accept=".xlsx,.xls,.csv" required></div>
+    </div><div class="actions"><button type="button" class="btn btn-light" id="staffTemplate">Download Excel Template</button><button type="submit" class="btn btn-light">Validate &amp; Preview</button></div></fieldset></form>
+    <div id="importStatus" class="notice" role="status" aria-live="polite" style="margin-top:15px">No accounts have been created.</div>
+    <div id="importPreview"></div><div class="actions"><button class="btn" id="createImportedUsers" disabled>Create Validated Accounts</button></div>
+    <p class="muted tiny">Passwords are sent to Supabase Authentication and are never saved in staff profiles, previews or reports. Deactivating a profile blocks access to application data.</p>
+  </div></div>`;
+  const status=$("importStatus"), preview=$("importPreview"), create=$("createImportedUsers"), fields=$("importFields"), close=$("closeImport");
+  const clearPending=()=>{for(const user of pending)user.password="";pending=[];create.disabled=true;};
+  close.onclick=()=>{if(running)return;clearPending();matrix=null;modalRoot.innerHTML="";};
+  fields.addEventListener("change",()=>{clearPending();preview.innerHTML="";status.textContent="Validate the file with the selected assignments before creating accounts.";});
+  $("staffTemplate").onclick=()=>{
+    if(!window.XLSX){status.textContent="Excel library did not load. Refresh and try again.";return;}
+    const wb=XLSX.utils.book_new(), ws=XLSX.utils.aoa_to_sheet([["email","password","name","role","mandal","schoolUdise"]]);
+    for(let row=2;row<=201;row++)for(const column of ["A","B","F"])ws[`${column}${row}`]={t:"s",v:"",z:"@"};
+    ws["!ref"]="A1:F201";
+    ws["!cols"]=[{wch:34},{wch:24},{wch:26},{wch:12},{wch:24},{wch:20}];
+    XLSX.utils.book_append_sheet(wb,ws,"Staff Logins");XLSX.writeFile(wb,"Khelo_Manyam_Staff_Logins.xlsx");
+  };
+  $("importUserForm").onsubmit=async event=>{
+    event.preventDefault();clearPending();preview.innerHTML="";
+    try{
+      if(!window.XLSX)throw new Error("Excel library did not load. Refresh and try again.");
+      const file=$("staffExcel").files[0];
+      if(!file)throw new Error("Choose an Excel or CSV file.");
+      if(file.size>2*1024*1024)throw new Error("Choose a spreadsheet smaller than 2 MB.");
+      fields.disabled=true;close.disabled=true;status.textContent="Reading and validating spreadsheet...";
+      const workbook=XLSX.read(await file.arrayBuffer(),{type:"array",raw:true,sheetRows:202});
+      const sheet=workbook.Sheets[workbook.SheetNames[0]];
+      if(!sheet)throw new Error("The workbook has no worksheets.");
+      if(XLSX.utils.decode_range(sheet["!fullref"]||sheet["!ref"]||"A1").e.r>200)throw new Error("Upload up to 200 account rows per file.");
+      matrix=XLSX.utils.sheet_to_json(sheet,{header:1,defval:"",raw:true,blankrows:true});
+      // Refresh only the small staff register, rather than student records.
+      await fetchUsers(true);
+      if(state.user?.uid!==administrator.uid)throw new Error("Your administrator session has changed. Sign in again.");
+      const result=prepareUserImport(matrix,{role:$("importRole").value,mandal:$("importMandal").value,schoolUdise:$("importSchool").value},state.schools,state.users.map(u=>u.email||""));
+      matrix=null;
+      if(result.errors.length){
+        for(const user of result.users)user.password="";
+        status.textContent=`${result.errors.length} row(s) need correction. No accounts were created.`;
+        preview.innerHTML=`<ul>${result.errors.map(error=>`<li>${esc(error)}</li>`).join("")}</ul>`;return;
+      }
+      pending=result.users;
+      status.textContent=`${pending.length} accounts validated. Review the assignments, then click Create Validated Accounts.`;
+      preview.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Row</th><th>Email</th><th>Name</th><th>Role</th><th>Mandal</th><th>School UDISE</th></tr></thead><tbody>${pending.map(u=>`<tr><td>${u.row}</td><td>${esc(u.email)}</td><td>${esc(u.displayName)}</td><td>${esc(u.role)}</td><td>${esc(u.mandal)}</td><td>${esc(u.schoolUdise)}</td></tr>`).join("")}</tbody></table></div>`;
+      create.disabled=false;
+    }catch(error){matrix=null;status.textContent=error.message||"Could not read this file.";}
+    finally{fields.disabled=false;close.disabled=false;}
+  };
+  create.onclick=async()=>{
+    if(running||!pending.length||state.user?.uid!==administrator.uid||!isDEO())return;
+    running=true;fields.disabled=true;close.disabled=true;create.disabled=true;
+    const total=pending.length, results=[];
+    let completed=0;
+    for(const user of pending){
+      if(state.user?.uid!==administrator.uid||!modalRoot.contains(status))break;
+      status.textContent=`Creating account ${completed+1} of ${total}. Keep this tab open.`;
+      try{
+        await createManagedAccount(db,administrator,user);
+        completed++;results.push(`Row ${user.row}: ${user.email} — Created`);
+        user.password="";
+      }catch(error){
+        results.push(`Row ${user.row}: ${user.email} — ${error.message}`);
+        break; // Avoid repeated failures or throttling; completed rows remain created.
+      }
+    }
+    clearPending();matrix=null;running=false;state.loaded.users=false;
+    if(!modalRoot.contains(status))return;
+    status.textContent=`${completed} of ${total} accounts created. ${total-completed} not confirmed as created. Remove created rows before uploading again; check Supabase Authentication if a connection failed.`;
+    preview.innerHTML=`<ul>${results.map(result=>`<li>${esc(result)}</li>`).join("")}</ul>`;
+    fields.disabled=false;close.disabled=false;$("staffExcel").value="";
+    try{await fetchUsers(true);if(state.view==="users")renderUsers();}
+    catch{status.textContent+=" Refresh User Management to reload the account list.";}
+  };
+}
+
 async function toggleUser(uid,active){
-  if(!confirm(`${active?"Deactivate":"Activate"} this account?`))return;
-  try{const fn=httpsCallable(functions,"setManagedUserStatus");await fn({uid,active});state.loaded.users=false;await fetchUsers(true);renderUsers();}
+  if(!confirm(`${active?"Activate":"Deactivate"} this account?`))return;
+  try{await setAccountActive(db,uid,active);state.loaded.users=false;await fetchUsers(true);renderUsers();}
   catch(err){alert(showError(err));}
 }
 
@@ -216,9 +292,9 @@ function openStudentModal(){
   $("studentForm").addEventListener("submit",async e=>{
     e.preventDefault();const f=new FormData(e.currentTarget);const school=schools.find(s=>s.udise===f.get("schoolUdise"));
     if(!school){$("studentFormError").textContent="Please select a valid school.";return;}
-    const payload={name:String(f.get("name")).trim(),pen:String(f.get("pen")||"").trim(),className:String(f.get("className")),gender:String(f.get("gender")||""),dob:String(f.get("dob")||""),schoolUdise:school.udise,schoolName:school.name,mandal:school.mandal,mandalCode:school.mandalCode,active:true,createdAt:serverTimestamp(),createdBy:state.user.uid};
+    const payload={name:String(f.get("name")).trim(),pen:String(f.get("pen")||"").trim(),className:String(f.get("className")),gender:String(f.get("gender")||""),dob:String(f.get("dob")||"")||null,schoolUdise:school.udise,schoolName:school.name,mandal:school.mandal,mandalCode:school.mandalCode,active:true,createdBy:state.user.uid};
     const btn=$("saveStudentBtn");btn.disabled=true;btn.textContent="Saving...";
-    try{await addDoc(collection(db,"students"),payload);modalRoot.innerHTML="";state.loaded.students=false;await fetchStudents(true);renderStudents();}
+    try{await api.insert("students",payload);modalRoot.innerHTML="";state.loaded.students=false;await fetchStudents(true);renderStudents();}
     catch(err){$("studentFormError").textContent=showError(err);btn.disabled=false;btn.textContent="Save Student";}
   });
 }
@@ -230,15 +306,14 @@ function fitnessPayload(student, values, testDate, remarks=""){
     className:student.className,gender:student.gender||"",
     schoolUdise:student.schoolUdise,schoolName:student.schoolName,
     mandal:student.mandal,mandalCode:student.mandalCode,
-    testDate,remarks,createdAt:serverTimestamp(),createdBy:state.user.uid
+    testDate,remarks,createdBy:state.user.uid
   };
   for(const [key] of FITNESS_FIELDS){
     const raw=values[key];
     payload[key]=raw===null||raw===undefined||String(raw).trim()===""?null:Number(raw);
     if(payload[key]!==null&&(!Number.isFinite(payload[key])||payload[key]<0))throw new Error(`Invalid value for ${key}.`);
   }
-  payload.bmi=payload.heightCm>0&&payload.weightKg>0
-    ?Number((payload.weightKg/((payload.heightCm/100)**2)).toFixed(2)):null;
+  // BMI is generated by PostgreSQL; the form shows a calculation before saving.
   return payload;
 }
 function renderFitness(){
@@ -303,12 +378,10 @@ async function handleFitnessFile(event){
     });
     if(errors.length)throw new Error(`Upload stopped. ${errors.slice(0,12).join(" | ")}${errors.length>12?` | and ${errors.length-12} more errors`:""}`);
     if(!prepared.length)throw new Error("No valid assessment rows were found.");
-    if(!confirm(`Import ${prepared.length} fitness assessment(s) into Firestore?`))return;
+    if(!confirm(`Import ${prepared.length} fitness assessment(s) into Supabase?`))return;
     let count=0;
     for(let i=0;i<prepared.length;i+=450){
-      const batch=writeBatch(db);
-      prepared.slice(i,i+450).forEach(payload=>batch.set(doc(collection(db,"fitnessTests")),payload));
-      await batch.commit();count+=Math.min(450,prepared.length-i);
+      await api.insert("fitness_tests",prepared.slice(i,i+450));count+=Math.min(450,prepared.length-i);
     }
     state.loaded.tests=false;await fetchTests(true);renderFitness();alert(`Successfully imported ${count} fitness assessment(s).`);
   }catch(err){alert(showError(err));}
@@ -337,7 +410,7 @@ function openFitnessModal(students){
       const values={};for(const [key] of FITNESS_FIELDS)values[key]=f.get(key);
       if(FITNESS_FIELDS.every(([key])=>values[key]===""))throw new Error("Enter at least one fitness measurement.");
       const payload=fitnessPayload(student,values,String(f.get("testDate")),String(f.get("remarks")||"").trim());
-      await addDoc(collection(db,"fitnessTests"),payload);
+      await api.insert("fitness_tests",payload);
       modalRoot.innerHTML="";state.loaded.tests=false;await fetchTests(true);renderFitness();
     }catch(error){err.textContent=showError(error);err.classList.remove("hidden");btn.disabled=false;btn.textContent="Save Assessment";}
   });
@@ -490,7 +563,7 @@ function renderReports(){
   const schoolOptions=state.schools.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name))).map(s=>`<option value="${esc(s.udise)}">${esc(s.name)} — ${esc(s.mandal)} (${esc(s.udise)})</option>`).join("");
   const mandals=scopedMandals();
   pageContent.innerHTML=`<div class="welcome"><h1>Reports &amp; Export</h1><p>Generate filtered PDF reports and multi-sheet Excel workbooks from records accessible to your account.</p></div>
-    <div class="notice">Reports use the records returned by your existing Firebase role permissions. DEO can access district data; MEO and PD/PET exports remain limited to their assigned areas. Blank fitness measurements are excluded from averages.</div>
+    <div class="notice">Reports use the records returned by your existing Supabase role permissions. DEO can access district data; MEO and PD/PET exports remain limited to their assigned areas. Blank fitness measurements are excluded from averages.</div>
     <section class="card" style="margin-bottom:15px"><div class="section-head"><h3>Report Filters</h3><button class="btn btn-light btn-small" id="resetReportFilters">Reset Filters</button></div>
       <div class="form-grid">
         <div class="field"><label>Assessment Date From</label><input type="date" id="reportFrom"></div>
@@ -540,7 +613,25 @@ function renderSettings(){
       <tr><th>Role</th><td>${esc(role())}</td></tr><tr><th>Mandal</th><td>${esc(p.mandal||"—")}</td></tr>
       <tr><th>School UDISE</th><td>${esc(p.schoolUdise||"—")}</td></tr><tr><th>Account Status</th><td>${p.active===true?"Active":"Inactive"}</td></tr>
     </tbody></table></div></div>
-    <div class="card" style="margin-top:15px"><h3>System Information</h3><p class="muted tiny">Khelo Manyam · Firebase Authentication + Cloud Firestore · Functions region: asia-south1.</p><p class="muted tiny">Academic year and student master data should be maintained using verified district records.</p></div>`;
+    <div class="card" style="margin-top:15px"><h3>Change Password</h3>
+      <form id="changePasswordForm"><div class="form-grid">
+        <div class="field"><label for="newPassword">New password (8–128 characters)</label><input id="newPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" required></div>
+        <div class="field"><label for="confirmPassword">Confirm new password</label><input id="confirmPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" required></div>
+      </div><button class="btn" id="changePasswordButton">Update Password</button><p id="passwordStatus" role="status" aria-live="polite"></p></form>
+    </div>
+    <div class="card" style="margin-top:15px"><h3>System Information</h3><p class="muted tiny">Khelo Manyam · Supabase Authentication and PostgreSQL.</p><p class="muted tiny">Academic year and student master data should be maintained using verified district records.</p></div>`;
+  $("changePasswordForm").addEventListener("submit",async event=>{
+    event.preventDefault();
+    const password=$("newPassword").value,status=$("passwordStatus"),button=$("changePasswordButton");
+    if(password!==$("confirmPassword").value){status.textContent="Passwords do not match.";return;}
+    button.disabled=true;status.textContent="Updating password...";
+    try{
+      const {error}=await supabase.auth.updateUser({password});
+      if(error)throw error;
+      event.target.reset();status.textContent="Password updated successfully.";
+    }catch(error){status.textContent=error.message||"Unable to update the password. Sign in again and retry.";}
+    finally{button.disabled=false;}
+  });
 }
 
 const VIEWS={
@@ -554,19 +645,22 @@ const VIEWS={
   reports:["Reports & Export",renderReports],
   settings:["Settings",renderSettings]
 };
+let viewChangeToken=0;
 async function openView(view){
   if(!VIEWS[view])return;
   if(view==="users"&&!isDEO()){alert("Only DEO Admin can access User Management.");return;}
+  const token=++viewChangeToken;
   state.view=view;state.search="";
   document.querySelectorAll("#mainNav button").forEach(b=>b.classList.toggle("active",b.dataset.view===view));
   setPageTitle(VIEWS[view][0]);pageContent.innerHTML=`<div class="empty">Loading ${esc(VIEWS[view][0])}...</div>`;
   try{
-    if(["overview","mandals","schools","students","fitness","analytics","reports"].includes(view))await ensureSchools();
+    if(["overview","mandals","schools","users","students","fitness","analytics","reports"].includes(view))await ensureSchools();
     if(["overview","mandals","schools","students","fitness","analytics","reports"].includes(view))await fetchStudents();
     if(["overview","mandals","schools","fitness","analytics","reports"].includes(view))await fetchTests();
     if(view==="users"||view==="reports"&&isDEO())await fetchUsers();
+    if(token!==viewChangeToken)return;
     VIEWS[view][1]();
-  }catch(err){pageContent.innerHTML=`<div class="notice">Unable to load this module: ${esc(showError(err))}</div><button class="btn" id="retryView">Retry</button>`;$("retryView").onclick=()=>openView(view);}
+  }catch(err){if(token!==viewChangeToken)return;pageContent.innerHTML=`<div class="notice">Unable to load this module: ${esc(showError(err))}</div><button class="btn" id="retryView">Retry</button>`;$("retryView").onclick=()=>openView(view);}
 }
 
 document.querySelectorAll("#mainNav button").forEach(btn=>{
@@ -575,23 +669,25 @@ document.querySelectorAll("#mainNav button").forEach(btn=>{
 
 loginForm.addEventListener("submit",async e=>{
   e.preventDefault();const email=$("email").value.trim(),password=$("password").value;
+  if(setupError){showLoginError(setupError);return;}
   if(!email||!password){showLoginError("Enter your official email and password.");return;}
   setLoginBusy(true);showLoginError("");
-  try{await signInWithEmailAndPassword(auth,email,password);}
-  catch(err){const messages={"auth/invalid-credential":"Invalid email or password.","auth/user-not-found":"User account not found.","auth/wrong-password":"Incorrect password.","auth/invalid-email":"Invalid email address.","auth/too-many-requests":"Too many attempts. Try again later.","auth/network-request-failed":"Check your internet connection.","auth/user-disabled":"This account has been disabled."};showLoginError(messages[err.code]||err.message);setLoginBusy(false);}
+  try{const {error}=await supabase.auth.signInWithPassword({email,password});if(error)throw error;}
+  catch(err){showLoginError(err.code==="invalid_credentials"?"Invalid email or password.":err.message||"Unable to sign in. Check your connection.");setLoginBusy(false);}
 });
 
-$("logoutButton").addEventListener("click",async()=>{try{await signOut(auth);loginForm.reset();showLoginError("Successfully logged out.");}catch(err){alert(showError(err));}});
+$("logoutButton").addEventListener("click",async()=>{try{const {error}=await supabase.auth.signOut();if(error)throw error;loginForm.reset();showLoginError("Successfully logged out.");}catch(err){alert(showError(err));}});
 
 let authChangeToken=0;
-onAuthStateChanged(auth,async user=>{
+async function handleAuthUser(authUser){
   const token=++authChangeToken;
-  if(!user){state.user=null;state.profile=null;state.loaded={};appShell.classList.add("hidden");loginBox.classList.remove("hidden");setLoginBusy(false);return;}
+  ++viewChangeToken;
+  const user=authUser?{...authUser,uid:authUser.id}:null;
+  if(!user){modalRoot.innerHTML="";state.user=null;state.profile=null;state.loaded={};appShell.classList.add("hidden");loginBox.classList.remove("hidden");setLoginBusy(false);return;}
   try{
-    const snap=await getDoc(profilePath(user.uid));
+    const p=await api.profile(user.uid);
     if(token!==authChangeToken)return;
-    if(!snap.exists())throw new Error("User profile not found. Contact DEO Administrator.");
-    const p=snap.data();
+    if(!p)throw new Error("User profile not found. Contact DEO Administrator.");
     if(p.active!==true)throw new Error("Your account is inactive. Contact DEO.");
     if(!["DEO","MEO","PD","PET"].includes(String(p.role||"").toUpperCase()))throw new Error("Invalid user role. Contact DEO.");
     if(p.role==="MEO"&&!p.mandal)throw new Error("MEO profile is missing its assigned mandal.");
@@ -605,7 +701,15 @@ onAuthStateChanged(auth,async user=>{
   }catch(err){
     if(token!==authChangeToken)return;
     console.error("PROFILE ERROR",err);showLoginError(err.message||"Unable to load profile.");
-    await signOut(auth);loginBox.classList.remove("hidden");appShell.classList.add("hidden");setLoginBusy(false);
+    await supabase.auth.signOut();loginBox.classList.remove("hidden");appShell.classList.add("hidden");setLoginBusy(false);
   }
-});
+}
+if(supabase){
+  supabase.auth.onAuthStateChange((event,session)=>{
+    if(!["INITIAL_SESSION","SIGNED_IN","SIGNED_OUT"].includes(event))return;
+    if(event==="SIGNED_IN"&&state.user?.uid===session?.user?.id)return;
+    // Finish the Auth callback before making more Supabase requests.
+    setTimeout(()=>handleAuthUser(session?.user||null),0);
+  });
+}else{showLoginError(setupError);loginButton.disabled=true;}
 console.log("KHELO MANYAM COMPLETE DEO DASHBOARD READY");

@@ -1,0 +1,14 @@
+-- First create your administrator using Authentication > Users > Add user.
+-- Replace the email and name below, then run this in the Supabase SQL Editor.
+-- Run once as project owner. Never expose this as a public RPC or signup trigger.
+do $$
+declare
+  admin_email text := 'REPLACE_WITH_YOUR_ADMIN_EMAIL';
+  admin_name text := 'DEO Administrator';
+  admin_id uuid;
+begin
+  select id into strict admin_id from auth.users where lower(email)=lower(admin_email);
+  insert into public.profiles (id,email,name,"displayName",role,mandal,"schoolUdise","schoolName")
+    values (admin_id,lower(admin_email),admin_name,admin_name,'DEO','ALL','ALL','All district schools');
+end;
+$$;

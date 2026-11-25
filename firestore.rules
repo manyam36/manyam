@@ -59,8 +59,42 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isDEO());
       allow list: if isDEO();
-      // User profile creation and changes must go through trusted Admin Cloud Functions.
-      allow create, update, delete: if false;
+      // Spark-plan administration: only an existing active DEO can provision profiles.
+      // Signing up with Firebase Auth alone never grants access to school data.
+      allow create: if isDEO()
+        && request.resource.data.keys().hasOnly([
+          'email', 'name', 'displayName', 'role', 'mandal', 'mandalCode',
+          'schoolUdise', 'schoolName', 'active', 'createdAt', 'createdBy'
+        ])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 254
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.displayName == request.resource.data.name
+        && request.resource.data.role in ['MEO', 'PD', 'PET']
+        && request.resource.data.active == true
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.mandalCode is string
+        && request.resource.data.schoolName is string
+        && request.resource.data.mandal in [
+          'BALIJIPETA', 'BHAMINI', 'G.L.PURAM', 'GARUGUBILLI',
+          'JIYYAMMAVALASA', 'KOMARADA', 'KURUPAM', 'MAKKUVA',
+          'PACHIPENTA', 'PALAKONDA', 'PARVATHIPURAM', 'SALURU',
+          'SEETHAMPETA', 'SEETHANAGARAM', 'VEERAGHATTAM'
+        ]
+        && ((request.resource.data.role == 'MEO' && request.resource.data.schoolUdise == 'ALL')
+          || (request.resource.data.role in ['PD', 'PET']
+            && request.resource.data.schoolUdise is string
+            && get(/databases/$(database)/documents/schools/$(request.resource.data.schoolUdise)).data.udise == request.resource.data.schoolUdise
+            && get(/databases/$(database)/documents/schools/$(request.resource.data.schoolUdise)).data.mandal == request.resource.data.mandal));
+      allow update: if isDEO()
+        && resource.data.role in ['MEO', 'PD', 'PET']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'updatedAt'])
+        && request.resource.data.active is bool
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
     }
 
     match /schools/{schoolId} {

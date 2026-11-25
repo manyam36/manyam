@@ -1,0 +1,6 @@
+project_id = "khelo-manyam"
+
+[functions.manage-users]
+# The handler verifies the user token with Auth.getUser, then checks the live DEO profile.
+# This also supports projects using Supabase's newer JWT signing keys.
+verify_jwt = false

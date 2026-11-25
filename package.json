@@ -1,5 +1,18 @@
 {
-  "dependencies": {
-    "firebase-admin": "^14.5.1"
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/user-import.test.mjs tests/data-api.test.mjs tests/manage-users.test.mjs tests/supabase-database.test.mjs",
+    "test:rules": "node --test tests/supabase-database.test.mjs",
+    "test:browser": "node tests/browser-smoke.mjs",
+    "test:firebase-legacy": "firebase emulators:exec --only firestore --project demo-manyam --non-interactive \"node --test tests/firestore.test.mjs\"",
+    "seed:prepare": "node scripts/generate-supabase-seed.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.6.0",
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^10.12.5",
+    "pg": "^8.23.1",
+    "playwright": "^1.65.1"
   }
 }
